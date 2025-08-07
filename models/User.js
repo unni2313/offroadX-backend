@@ -16,6 +16,14 @@ const userSchema = new mongoose.Schema({
   // ➕ Add these fields for OTP verification
   otp: { type: String },
   otpExpiry: { type: Date },
+  
+  // ➕ Add these fields for login attempt tracking
+  failedLoginAttempts: { type: Number, default: 0 },
+  isBlocked: { type: Boolean, default: false },
+  blockExpiry: { type: Date },
+  
+  // ➕ Add field for event participations
+  eventParticipations: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Event' }],
 }, {
   timestamps: true
 });
