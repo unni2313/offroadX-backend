@@ -8,6 +8,7 @@ const eventsRoute = require('./events'); // ✅ Add this line
 const otpRoute = require('./routes/otp'); // ✅ Add OTP route
 const passwordResetRoute = require('./routes/passwordReset'); // ✅ Add password reset route
 const adminRoute = require('./routes/admin'); // ✅ Add admin route
+const profileRoute = require('./routes/profile');
 
 const app = express()
 const PORT = process.env.PORT || 5000
@@ -33,6 +34,7 @@ app.use('/api/events', eventsRoute); // ✅ Add this line
 app.use('/api/otp', otpRoute); // ✅ Add OTP route
 app.use('/api/password', passwordResetRoute); // ✅ Add password reset route
 app.use('/api/admin', adminRoute); // ✅ Add admin route
+app.use('/api/profile', profileRoute);
 
 // Test route
 app.get('/api', (req, res) => {
