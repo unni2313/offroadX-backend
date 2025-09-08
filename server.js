@@ -36,6 +36,10 @@ app.use('/api/password', passwordResetRoute); // ✅ Add password reset route
 app.use('/api/admin', adminRoute); // ✅ Add admin route
 app.use('/api/profile', profileRoute);
 
+// 🚗 Vehicles routes
+const vehiclesRoute = require('./routes/vehicles');
+app.use('/api/vehicles', vehiclesRoute);
+
 // Test route
 app.get('/api', (req, res) => {
   res.json({ message: 'Hello from Node.js backend!' })
