@@ -203,4 +203,17 @@ router.get('/user/participations', authenticateToken, async (req, res) => {
   }
 });
 
+// GET: List participants for an event
+router.get('/:id/participants', authenticateToken, async (req, res) => {
+  try {
+    const eventId = req.params.id;
+    const users = await User.find({ eventParticipations: eventId })
+      .select('firstName secondName email phone role');
+    return res.json({ count: users.length, participants: users });
+  } catch (error) {
+    console.error('Error fetching event participants:', error);
+    res.status(500).json({ error: 'Failed to fetch participants' });
+  }
+});
+
 module.exports = router;
