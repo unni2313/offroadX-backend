@@ -40,6 +40,10 @@ app.use('/api/profile', profileRoute);
 const vehiclesRoute = require('./routes/vehicles');
 app.use('/api/vehicles', vehiclesRoute);
 
+// 🛤️ Routes (trail routes) routes
+const routesRoute = require('./routes/routes');
+app.use('/api/routes', routesRoute);
+
 // Test route
 app.get('/api', (req, res) => {
   res.json({ message: 'Hello from Node.js backend!' })
