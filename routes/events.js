@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 const Event = require('../models/Event');
 const User = require('../models/User');
 const Registration = require('../models/Registration');
@@ -51,6 +52,169 @@ router.get('/', async (req, res) => {
     console.error('Error fetching events:', error);
     res.status(500).json({ error: 'Failed to retrieve events' });
   }
+});
+
+// GET: Get all results (with optional filtering)
+router.get('/results', authenticateToken, async (req, res) => {
+  try {
+    const { mineOnly, eventId, year, search } = req.query;
+    const userId = req.user.id;
+
+    const pipeline = [];
+
+    const matchStage = {};
+
+    if (mineOnly === 'true') {
+      matchStage.user = new mongoose.Types.ObjectId(userId);
+    }
+
+    if (eventId) {
+      matchStage.event = new mongoose.Types.ObjectId(eventId);
+    }
+
+    if (Object.keys(matchStage).length > 0) {
+      pipeline.push({ $match: matchStage });
+    }
+
+    pipeline.push(
+      {
+        $lookup: {
+          from: 'events',
+          localField: 'event',
+          foreignField: '_id',
+          as: 'event'
+        }
+      },
+      { $unwind: '$event' },
+      {
+        $lookup: {
+          from: 'races',
+          localField: 'race',
+          foreignField: '_id',
+          as: 'race'
+        }
+      },
+      { $unwind: '$race' },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'user',
+          foreignField: '_id',
+          as: 'user'
+        }
+      },
+      { $unwind: '$user' },
+      {
+        $lookup: {
+          from: 'vehicles',
+          localField: 'vehicle',
+          foreignField: '_id',
+          as: 'vehicle'
+        }
+      },
+      { $unwind: { path: '$vehicle', preserveNullAndEmptyArrays: true } },
+      {
+        $addFields: {
+          eventYear: {
+            $cond: {
+              if: { $gt: [{ $strLenCP: '$event.date' }, 0] },
+              then: { $substr: ['$event.date', 0, 4] },
+              else: null
+            }
+          },
+          searchBlob: {
+            $toLower: {
+              $trim: {
+                input: {
+                  $concat: [
+                    { $ifNull: ['$event.name', ''] }, ' ',
+                    { $ifNull: ['$race.name', ''] }, ' ',
+                    { $ifNull: ['$user.firstName', ''] }, ' ',
+                    { $ifNull: ['$user.secondName', ''] }, ' ',
+                    { $ifNull: ['$vehicle.make', ''] }, ' ',
+                    { $ifNull: ['$vehicle.model', ''] }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    );
+
+    if (year) {
+      pipeline.push({ $match: { eventYear: year } });
+    }
+
+    if (search) {
+      const lowered = search.toLowerCase();
+      pipeline.push({ $match: { searchBlob: { $regex: lowered } } });
+    }
+
+    pipeline.push(
+      { $sort: { 'event.date': -1, 'race.date': -1, position: 1 } },
+      {
+        $group: {
+          _id: '$event._id',
+          event: { $first: '$event' },
+          races: {
+            $push: {
+              _id: '$race._id',
+              race: '$race',
+              position: '$position',
+              score: '$score',
+              finishingTimeMs: '$finishingTimeMs',
+              notes: '$notes',
+              participant: '$user',
+              vehicle: '$vehicle'
+            }
+          }
+        }
+      },
+      { $sort: { 'event.date': -1 } }
+    );
+
+    const results = await Result.aggregate(pipeline);
+
+    res.json({ results });
+  } catch (error) {
+    console.error('Error fetching results:', error);
+    res.status(500).json({ error: 'Failed to fetch results' });
+  }
+});
+
+// GET: SSE stream for result updates
+router.get('/results/stream', authenticateToken, (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Cache-Control'
+  });
+
+  // Send initial connection message
+  res.write(`data: ${JSON.stringify({ event: 'connected' })}\n\n`);
+
+  // Keep connection alive
+  const keepAlive = setInterval(() => {
+    res.write(`data: ${JSON.stringify({ event: 'ping' })}\n\n`);
+  }, 30000);
+
+  // Store this connection for broadcasting
+  if (!global.resultStreams) {
+    global.resultStreams = [];
+  }
+  global.resultStreams.push(res);
+
+  // Clean up on disconnect
+  req.on('close', () => {
+    clearInterval(keepAlive);
+    const index = global.resultStreams.indexOf(res);
+    if (index > -1) {
+      global.resultStreams.splice(index, 1);
+    }
+  });
 });
 
 // GET: Retrieve a specific event by ID
@@ -495,65 +659,6 @@ router.post('/:eventId/races/:raceId/results', authenticateToken, requireAdmin, 
     console.error('Error saving result:', error);
     res.status(500).json({ error: 'Failed to save result' });
   }
-});
-
-// GET: Get all results (with optional filtering)
-router.get('/results', authenticateToken, async (req, res) => {
-  try {
-    const { mineOnly } = req.query;
-    const userId = req.user.id;
-
-    let filter = {};
-    if (mineOnly === 'true') {
-      filter.user = userId;
-    }
-
-    const results = await Result.find(filter)
-      .populate('event', 'name date')
-      .populate('race', 'name date startTime')
-      .populate('user', 'firstName secondName')
-      .populate('vehicle', 'make model year')
-      .sort({ 'event.date': -1, 'race.date': -1, position: 1 });
-
-    res.json({ results });
-  } catch (error) {
-    console.error('Error fetching results:', error);
-    res.status(500).json({ error: 'Failed to fetch results' });
-  }
-});
-
-// GET: SSE stream for result updates
-router.get('/results/stream', authenticateToken, (req, res) => {
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Cache-Control'
-  });
-
-  // Send initial connection message
-  res.write(`data: ${JSON.stringify({ event: 'connected' })}\n\n`);
-
-  // Keep connection alive
-  const keepAlive = setInterval(() => {
-    res.write(`data: ${JSON.stringify({ event: 'ping' })}\n\n`);
-  }, 30000);
-
-  // Store this connection for broadcasting
-  if (!global.resultStreams) {
-    global.resultStreams = [];
-  }
-  global.resultStreams.push(res);
-
-  // Clean up on disconnect
-  req.on('close', () => {
-    clearInterval(keepAlive);
-    const index = global.resultStreams.indexOf(res);
-    if (index > -1) {
-      global.resultStreams.splice(index, 1);
-    }
-  });
 });
 
 module.exports = router;
