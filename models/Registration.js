@@ -13,6 +13,23 @@ const registrationSchema = new mongoose.Schema({
     required: true, 
     index: true 
   },
+  // Required: user must select at least one race within the event
+  races: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Race',
+    required: true
+  }],
+  // Ensure at least one race is selected
+  _racesNonEmpty: {
+    type: Number,
+    default: 1,
+    validate: {
+      validator: function () {
+        return Array.isArray(this.races) && this.races.length > 0;
+      },
+      message: 'At least one race must be selected'
+    }
+  },
   status: { 
     type: String, 
     enum: ['pending', 'approved', 'rejected'], 
@@ -58,6 +75,15 @@ const registrationSchema = new mongoose.Schema({
   }
 }, { 
   timestamps: true 
+});
+
+// Map of raceId -> [vehicleIds] selected for that race
+registrationSchema.add({
+  vehiclesByRace: {
+    type: Map,
+    of: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Vehicle' }],
+    default: undefined
+  }
 });
 
 // Compound index to ensure one registration per user per event

@@ -44,6 +44,10 @@ app.use('/api/vehicles', vehiclesRoute);
 const routesRoute = require('./routes/routes');
 app.use('/api/routes', routesRoute);
 
+// 🏁 Races routes
+const racesRoute = require('./routes/races');
+app.use('/api/races', racesRoute);
+
 // Test route
 app.get('/api', (req, res) => {
   res.json({ message: 'Hello from Node.js backend!' })
