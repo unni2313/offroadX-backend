@@ -24,6 +24,16 @@ const userSchema = new mongoose.Schema({
   
   // ➕ Add field for event participations
   eventParticipations: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Event' }],
+
+  // ➕ Profile photo fields
+  profilePhotoUrl: { type: String, default: '' },
+  profilePhotoPublicId: { type: String, default: '' },
+
+  // ➕ Driver fields
+  dob: { type: Date },
+  drivingLicenseNumber: { type: String, trim: true },
+  licenseDocUrl: { type: String, default: '' },
+  licenseDocPublicId: { type: String, default: '' },
 }, {
   timestamps: true
 });

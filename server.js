@@ -4,10 +4,11 @@ const cors = require('cors')
 const mongoose = require('mongoose')
 const registerRoute = require('./register')
 const loginRoute = require('./login')
-const eventsRoute = require('./events'); // ✅ Add this line
+const eventsRoute = require('./routes/events'); // ✅ Updated to use new events route
 const otpRoute = require('./routes/otp'); // ✅ Add OTP route
 const passwordResetRoute = require('./routes/passwordReset'); // ✅ Add password reset route
 const adminRoute = require('./routes/admin'); // ✅ Add admin route
+const profileRoute = require('./routes/profile');
 
 const app = express()
 const PORT = process.env.PORT || 5000
@@ -33,10 +34,34 @@ app.use('/api/events', eventsRoute); // ✅ Add this line
 app.use('/api/otp', otpRoute); // ✅ Add OTP route
 app.use('/api/password', passwordResetRoute); // ✅ Add password reset route
 app.use('/api/admin', adminRoute); // ✅ Add admin route
+app.use('/api/profile', profileRoute);
+
+// 🚗 Vehicles routes
+const vehiclesRoute = require('./routes/vehicles');
+app.use('/api/vehicles', vehiclesRoute);
+
+// 🛤️ Routes (trail routes) routes
+const routesRoute = require('./routes/routes');
+app.use('/api/routes', routesRoute);
+
+// 🏁 Races routes
+const racesRoute = require('./routes/races');
+app.use('/api/races', racesRoute);
 
 // Test route
 app.get('/api', (req, res) => {
   res.json({ message: 'Hello from Node.js backend!' })
+})
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  const healthStatus = {
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    storage: 'ok' // Assuming storage is working if the server is running
+  }
+  res.json(healthStatus)
 })
 
 // ✅ Start server
