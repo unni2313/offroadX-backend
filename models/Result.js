@@ -10,6 +10,15 @@ const resultSchema = new mongoose.Schema({
   finishingTimeMs: { type: Number, default: 0 }, // store as milliseconds
   position: { type: Number },
   notes: { type: String, trim: true },
+  // Verification fields
+  verifiedByAdmin: { type: Boolean, default: false },
+  verifiedAt: { type: Date, default: null },
+  verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  verificationNotes: { type: String, trim: true, default: '' },
+  guidelineChecklist: [{
+    item: String,
+    checked: { type: Boolean, default: false }
+  }]
 }, { timestamps: true });
 
 resultSchema.index({ event: 1, race: 1, user: 1 }, { unique: true });

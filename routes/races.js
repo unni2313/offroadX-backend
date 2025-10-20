@@ -4,6 +4,7 @@ const Race = require('../models/Race');
 const Event = require('../models/Event');
 const Route = require('../models/Route');
 const User = require('../models/User');
+const Result = require('../models/Result');
 const jwt = require('jsonwebtoken');
 
 // Middleware to verify JWT token
@@ -75,6 +76,84 @@ router.get('/event/:eventId', async (req, res) => {
   }
 });
 
+// GET: Retrieve all results for a specific race
+// NOTE: This MUST come before the generic /:id route to avoid route conflict
+router.get('/:raceId/results', authenticateToken, async (req, res) => {
+  try {
+    const { raceId } = req.params;
+
+    // Verify race exists
+    const race = await Race.findById(raceId);
+    if (!race) {
+      return res.status(404).json({ error: 'Race not found' });
+    }
+
+    // Get the event for this race
+    const eventId = race.event;
+
+    // Find all registrations for this event that include this race
+    const Registration = require('../models/Registration');
+    const registrations = await Registration.find({
+      event: eventId,
+      races: raceId,
+      status: 'approved'  // Only approved registrations
+    }).populate('user', 'firstName secondName email').populate('vehicles', 'make model year');
+
+    // Create Result documents for registrations that don't have results yet
+    for (const registration of registrations) {
+      const existingResult = await Result.findOne({
+        race: raceId,
+        registration: registration._id,
+        user: registration.user._id
+      });
+
+      if (!existingResult) {
+        // Get the vehicle for this race from vehiclesByRace map if available
+        let vehicleId = null;
+        if (registration.vehiclesByRace && registration.vehiclesByRace.get(raceId)) {
+          vehicleId = registration.vehiclesByRace.get(raceId)[0];
+        } else if (registration.vehicles && registration.vehicles.length > 0) {
+          vehicleId = registration.vehicles[0]._id;
+        }
+
+        // Create a new Result document
+        await Result.create({
+          event: eventId,
+          race: raceId,
+          registration: registration._id,
+          user: registration.user._id,
+          vehicle: vehicleId,
+          score: 0,
+          finishingTimeMs: 0,
+          position: null,
+          verifiedByAdmin: false
+        });
+      }
+    }
+
+    // Fetch all results for this race (now including newly created ones)
+    const results = await Result.find({ race: raceId })
+      .populate('user', 'firstName secondName email')
+      .populate('vehicle', 'make model year registrationNumber')
+      .populate({
+        path: 'registration',
+        populate: {
+          path: 'vehicles',
+          select: '_id make model year registrationNumber color type'
+        }
+      })
+      .sort({ position: 1, score: -1 });
+
+    res.status(200).json({
+      message: 'Results retrieved successfully',
+      results
+    });
+  } catch (error) {
+    console.error('Error fetching race results:', error);
+    res.status(500).json({ error: 'Failed to retrieve race results' });
+  }
+});
+
 // GET: Retrieve a specific race by ID
 router.get('/:id', async (req, res) => {
   try {
@@ -127,6 +206,100 @@ router.post('/create', authenticateToken, requireAdmin, async (req, res) => {
   } catch (error) {
     console.error('Error saving race:', error);
     res.status(500).json({ error: 'Failed to create race' });
+  }
+});
+
+// POST: Verify a participant (Admin only)
+router.post('/:raceId/verify-participant', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { raceId } = req.params;
+    const { resultId, guidelineChecklist, verificationNotes } = req.body;
+
+    // Verify race exists
+    const race = await Race.findById(raceId);
+    if (!race) {
+      return res.status(404).json({ error: 'Race not found' });
+    }
+
+    // Find and update the result
+    const result = await Result.findByIdAndUpdate(
+      resultId,
+      {
+        verifiedByAdmin: true,
+        verifiedAt: new Date(),
+        verifiedBy: req.user.id,
+        guidelineChecklist: guidelineChecklist || [],
+        verificationNotes: verificationNotes || ''
+      },
+      { new: true }
+    )
+      .populate('user', 'firstName secondName email')
+      .populate('vehicle', 'make model year');
+
+    if (!result) {
+      return res.status(404).json({ error: 'Result not found' });
+    }
+
+    res.status(200).json({
+      message: 'Participant verified successfully',
+      result
+    });
+  } catch (error) {
+    console.error('Error verifying participant:', error);
+    res.status(500).json({ error: 'Failed to verify participant' });
+  }
+});
+
+// POST: Add or update result data for a verified participant (Admin only)
+router.post('/:raceId/add-result', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { raceId } = req.params;
+    const { resultId, score, finishingTimeMs, position, notes, vehicle } = req.body;
+
+    // Verify race exists
+    const race = await Race.findById(raceId);
+    if (!race) {
+      return res.status(404).json({ error: 'Race not found' });
+    }
+
+    // Verify result is already verified before updating with result data
+    const existingResult = await Result.findById(resultId);
+    if (!existingResult) {
+      return res.status(404).json({ error: 'Result not found' });
+    }
+
+    if (!existingResult.verifiedByAdmin) {
+      return res.status(400).json({ error: 'Participant must be verified before adding results' });
+    }
+
+    // Update result with score, timing data, and vehicle
+    const updateData = {
+      score: Number(score) || 0,
+      finishingTimeMs: Number(finishingTimeMs) || 0,
+      position: Number(position) || null,
+      notes: notes || ''
+    };
+
+    // Only update vehicle if provided
+    if (vehicle) {
+      updateData.vehicle = vehicle;
+    }
+
+    const result = await Result.findByIdAndUpdate(
+      resultId,
+      updateData,
+      { new: true }
+    )
+      .populate('user', 'firstName secondName email')
+      .populate('vehicle', 'make model year registrationNumber');
+
+    res.status(200).json({
+      message: 'Result saved successfully',
+      result
+    });
+  } catch (error) {
+    console.error('Error saving result:', error);
+    res.status(500).json({ error: 'Failed to save result' });
   }
 });
 

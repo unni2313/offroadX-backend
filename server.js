@@ -53,6 +53,17 @@ app.get('/api', (req, res) => {
   res.json({ message: 'Hello from Node.js backend!' })
 })
 
+// Health check endpoint
+app.get('/health', (req, res) => {
+  const healthStatus = {
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    storage: 'ok' // Assuming storage is working if the server is running
+  }
+  res.json(healthStatus)
+})
+
 // ✅ Start server
 app.listen(PORT, () => {
   console.log(`🚀 Server is running on http://localhost:${PORT}`)

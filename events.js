@@ -53,6 +53,31 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET: Retrieve upcoming events (must come before /:id route)
+router.get('/upcoming', authenticateToken, async (req, res) => {
+  try {
+    // Get today's date as a string in YYYY-MM-DD format
+    const today = new Date();
+    const todayString = today.toISOString().split('T')[0];
+    
+    // Find events with date >= today and status = 'upcoming'
+    // Since dates are stored as strings, we do string comparison
+    const upcomingEvents = await Event.find({
+      date: { $gte: todayString },
+      status: 'upcoming'
+    }).sort({ date: 1 });
+    
+    res.status(200).json({
+      message: 'Upcoming events retrieved successfully',
+      events: upcomingEvents,
+      count: upcomingEvents.length
+    });
+  } catch (error) {
+    console.error('Error fetching upcoming events:', error);
+    res.status(500).json({ error: 'Failed to retrieve upcoming events' });
+  }
+});
+
 // GET: Retrieve a specific event by ID
 router.get('/:id', async (req, res) => {
   try {

@@ -54,6 +54,24 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET: Retrieve upcoming events
+router.get('/upcoming', authenticateToken, async (req, res) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const upcomingEvents = await Event.find({
+      date: { $gte: today },
+      status: 'upcoming'
+    }).sort({ date: 1 });
+    
+    res.status(200).json(upcomingEvents);
+  } catch (error) {
+    console.error('Error fetching upcoming events:', error);
+    res.status(500).json({ error: 'Failed to retrieve upcoming events' });
+  }
+});
+
 // GET: Get all results (with optional filtering)
 router.get('/results', authenticateToken, async (req, res) => {
   try {
@@ -269,6 +287,9 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
 
     // Also delete all registrations for this event
     await Registration.deleteMany({ event: eventId });
+    
+    // Also delete all result records for this event
+    await Result.deleteMany({ event: eventId });
 
     res.status(200).json({ message: 'Event deleted successfully' });
   } catch (error) {
@@ -365,8 +386,11 @@ router.post('/:id/cancel-registration', authenticateToken, async (req, res) => {
       await Event.findByIdAndUpdate(eventId, { $inc: { participants: -1 } });
     }
 
+    // Clean up any Result records created for this registration
+    await Result.deleteMany({ registration: registration._id });
+
     res.status(200).json({ 
-      message: 'Registration cancelled successfully'
+      message: 'Registration cancelled successfully. Associated result records removed.'
     });
   } catch (error) {
     console.error('Error cancelling registration:', error);
@@ -476,7 +500,9 @@ router.post('/registrations/:registrationId/approve', authenticateToken, require
     const { reviewNotes } = req.body;
     const adminId = req.user.id;
 
-    const registration = await Registration.findById(registrationId).populate('event');
+    const registration = await Registration.findById(registrationId)
+      .populate('event')
+      .populate('races');
     if (!registration) {
       return res.status(404).json({ error: 'Registration not found' });
     }
@@ -501,10 +527,33 @@ router.post('/registrations/:registrationId/approve', authenticateToken, require
     // Increment event participant count
     await Event.findByIdAndUpdate(event._id, { $inc: { participants: 1 } });
 
+    // CREATE RESULT RECORDS FOR EACH RACE (fulfilling requirement: "When the participant is approved a record will be stored in results collection")
+    const resultPromises = registration.races.map(race => 
+      Result.findOneAndUpdate(
+        { 
+          user: registration.user, 
+          race: race._id, 
+          event: event._id 
+        },
+        { 
+          user: registration.user,
+          race: race._id,
+          event: event._id,
+          registration: registrationId,
+          verifiedByAdmin: false, // Will be set to true after verification
+          score: 0,
+          finishingTimeMs: 0
+        },
+        { upsert: true, new: true }
+      )
+    );
+    
+    await Promise.all(resultPromises);
+
     await registration.populate('user', 'firstName secondName email');
 
     res.status(200).json({ 
-      message: 'Registration approved successfully',
+      message: 'Registration approved successfully. Result records created for participant.',
       registration
     });
   } catch (error) {
@@ -535,6 +584,9 @@ router.post('/registrations/:registrationId/reject', authenticateToken, requireA
     registration.reviewedBy = adminId;
     registration.reviewNotes = reviewNotes;
     await registration.save();
+
+    // Clean up any Result records that might have been created if this registration was previously approved
+    await Result.deleteMany({ registration: registrationId });
 
     await registration.populate('user', 'firstName secondName email');
 
@@ -658,6 +710,290 @@ router.post('/:eventId/races/:raceId/results', authenticateToken, requireAdmin, 
   } catch (error) {
     console.error('Error saving result:', error);
     res.status(500).json({ error: 'Failed to save result' });
+  }
+});
+
+// GET: Retrieve event guidelines
+router.get('/:eventId/guidelines', async (req, res) => {
+  try {
+    const event = await Event.findById(req.params.eventId).select('guidelines name');
+    if (!event) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+    res.json({ 
+      message: 'Guidelines retrieved successfully',
+      guidelines: event.guidelines 
+    });
+  } catch (error) {
+    console.error('Error fetching guidelines:', error);
+    res.status(500).json({ error: 'Failed to fetch guidelines' });
+  }
+});
+
+// PUT: Update event guidelines (Admin only)
+router.put('/:eventId/guidelines', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { text, checklistItems } = req.body;
+    
+    if (!text && !checklistItems) {
+      return res.status(400).json({ error: 'Please provide text or checklistItems' });
+    }
+
+    const updateData = {};
+    if (text !== undefined) updateData['guidelines.text'] = text;
+    if (checklistItems !== undefined) updateData['guidelines.checklistItems'] = checklistItems;
+
+    const event = await Event.findByIdAndUpdate(
+      req.params.eventId,
+      updateData,
+      { new: true }
+    ).select('guidelines name');
+
+    if (!event) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+
+    res.json({ 
+      message: 'Guidelines updated successfully',
+      guidelines: event.guidelines 
+    });
+  } catch (error) {
+    console.error('Error updating guidelines:', error);
+    res.status(500).json({ error: 'Failed to update guidelines' });
+  }
+});
+
+// GET: Get pending verifications for a race
+router.get('/races/:raceId/pending-verifications', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const raceId = req.params.raceId;
+
+    // Find all results for this race that need verification
+    const pendingVerifications = await Result.find({
+      race: raceId,
+      verifiedByAdmin: false
+    })
+      .populate('user', 'firstName secondName email phone')
+      .populate('vehicle', 'make model year')
+      .populate('registration', 'experienceLevel medicalConditions')
+      .sort({ createdAt: 1 });
+
+    res.json({
+      message: 'Pending verifications retrieved successfully',
+      count: pendingVerifications.length,
+      verifications: pendingVerifications
+    });
+  } catch (error) {
+    console.error('Error fetching pending verifications:', error);
+    res.status(500).json({ error: 'Failed to fetch pending verifications' });
+  }
+});
+
+// POST: Verify a participant for a race
+router.post('/races/:raceId/verify-participant', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { resultId, guidelineChecklist, verificationNotes } = req.body;
+    const adminId = req.user.id;
+
+    if (!resultId) {
+      return res.status(400).json({ error: 'Result ID is required' });
+    }
+
+    // Get the event to access guidelines
+    const result = await Result.findById(resultId);
+    if (!result) {
+      return res.status(404).json({ error: 'Result not found' });
+    }
+
+    const event = await Event.findById(result.event);
+    if (!event) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+
+    // Check if all required guidelines are checked
+    if (guidelineChecklist && guidelineChecklist.length > 0) {
+      const requiredItems = event.guidelines.checklistItems.filter(item => item.required);
+      const checkedRequired = guidelineChecklist.filter(item => item.checked && event.guidelines.checklistItems.find(g => g.item === item.item && g.required));
+      
+      if (checkedRequired.length < requiredItems.length) {
+        return res.status(400).json({ 
+          error: 'All required guideline items must be checked',
+          required: requiredItems.length,
+          checked: checkedRequired.length
+        });
+      }
+    }
+
+    // Update result with verification
+    const updatedResult = await Result.findByIdAndUpdate(
+      resultId,
+      {
+        verifiedByAdmin: true,
+        verifiedAt: new Date(),
+        verifiedBy: adminId,
+        verificationNotes: verificationNotes || '',
+        guidelineChecklist: guidelineChecklist || []
+      },
+      { new: true }
+    )
+      .populate('user', 'firstName secondName email')
+      .populate('verifiedBy', 'firstName secondName');
+
+    res.json({
+      message: 'Participant verified successfully',
+      result: updatedResult
+    });
+  } catch (error) {
+    console.error('Error verifying participant:', error);
+    res.status(500).json({ error: 'Failed to verify participant' });
+  }
+});
+
+// GET: Get verification status for a race
+router.get('/races/:raceId/verification-status', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const raceId = req.params.raceId;
+
+    const results = await Result.find({ race: raceId })
+      .select('user verifiedByAdmin verifiedAt');
+
+    const verified = results.filter(r => r.verifiedByAdmin).length;
+    const pending = results.filter(r => !r.verifiedByAdmin).length;
+
+    res.json({
+      message: 'Verification status retrieved successfully',
+      total: results.length,
+      verified,
+      pending,
+      verificationPercentage: results.length > 0 ? Math.round((verified / results.length) * 100) : 0
+    });
+  } catch (error) {
+    console.error('Error fetching verification status:', error);
+    res.status(500).json({ error: 'Failed to fetch verification status' });
+  }
+});
+
+// GET: Get all results for a race (for viewing and editing)
+router.get('/races/:raceId/results', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const raceId = req.params.raceId;
+
+    const results = await Result.find({ race: raceId })
+      .populate('user', 'firstName secondName email')
+      .populate('vehicle', 'make model year')
+      .sort({ createdAt: 1 });
+
+    res.json({
+      message: 'Race results retrieved successfully',
+      total: results.length,
+      results
+    });
+  } catch (error) {
+    console.error('Error fetching race results:', error);
+    res.status(500).json({ error: 'Failed to fetch race results' });
+  }
+});
+
+// POST: Add race results for a verified participant (Admin only)
+router.post('/races/:raceId/add-result', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { resultId, score, finishingTimeMs, position, notes } = req.body;
+    const raceId = req.params.raceId;
+
+    if (!resultId) {
+      return res.status(400).json({ error: 'Result ID is required' });
+    }
+
+    // Get the result
+    const result = await Result.findById(resultId);
+    if (!result) {
+      return res.status(404).json({ error: 'Result not found' });
+    }
+
+    // Verify that race ID matches
+    if (result.race.toString() !== raceId) {
+      return res.status(400).json({ error: 'Race ID mismatch' });
+    }
+
+    // Check if participant is verified (KEY VALIDATION)
+    if (!result.verifiedByAdmin) {
+      return res.status(403).json({ 
+        error: 'Participant must be verified before adding results',
+        verificationRequired: true,
+        verifiedByAdmin: result.verifiedByAdmin
+      });
+    }
+
+    // Update result with race outcome
+    const updatedResult = await Result.findByIdAndUpdate(
+      resultId,
+      {
+        score: score !== undefined ? score : result.score,
+        finishingTimeMs: finishingTimeMs !== undefined ? finishingTimeMs : result.finishingTimeMs,
+        position: position !== undefined ? position : result.position,
+        notes: notes || result.notes
+      },
+      { new: true }
+    )
+      .populate('user', 'firstName secondName email')
+      .populate('verifiedBy', 'firstName secondName');
+
+    res.json({
+      message: 'Race result added successfully',
+      result: updatedResult
+    });
+  } catch (error) {
+    console.error('Error adding race result:', error);
+    res.status(500).json({ error: 'Failed to add race result' });
+  }
+});
+
+// PUT: Update race results for a verified participant (Admin only)
+router.put('/races/:raceId/results/:resultId', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { score, finishingTimeMs, position, notes } = req.body;
+    const { raceId, resultId } = req.params;
+
+    // Get the result
+    const result = await Result.findById(resultId);
+    if (!result) {
+      return res.status(404).json({ error: 'Result not found' });
+    }
+
+    // Verify that race ID matches
+    if (result.race.toString() !== raceId) {
+      return res.status(400).json({ error: 'Race ID mismatch' });
+    }
+
+    // Check if participant is verified
+    if (!result.verifiedByAdmin) {
+      return res.status(403).json({ 
+        error: 'Participant must be verified before updating results',
+        verificationRequired: true
+      });
+    }
+
+    // Update result with race outcome
+    const updatedResult = await Result.findByIdAndUpdate(
+      resultId,
+      {
+        score: score !== undefined ? score : result.score,
+        finishingTimeMs: finishingTimeMs !== undefined ? finishingTimeMs : result.finishingTimeMs,
+        position: position !== undefined ? position : result.position,
+        notes: notes || result.notes
+      },
+      { new: true }
+    )
+      .populate('user', 'firstName secondName email')
+      .populate('verifiedBy', 'firstName secondName');
+
+    res.json({
+      message: 'Race result updated successfully',
+      result: updatedResult
+    });
+  } catch (error) {
+    console.error('Error updating race result:', error);
+    res.status(500).json({ error: 'Failed to update race result' });
   }
 });
 

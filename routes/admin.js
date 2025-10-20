@@ -216,4 +216,42 @@ router.get('/users/:id/license/url', verifyAdmin, async (req, res) => {
   }
 });
 
+// Get dashboard stats
+router.get('/stats', verifyAdmin, async (req, res) => {
+  try {
+    const Event = require('../models/Event');
+    const Route = require('../models/Route');
+    const Registration = require('../models/Registration');
+    
+    // Count upcoming events
+    // Since dates are stored as strings in YYYY-MM-DD format, convert today to string
+    const today = new Date();
+    const todayString = today.toISOString().split('T')[0];
+    const upcomingEvents = await Event.countDocuments({
+      date: { $gte: todayString },
+      status: 'upcoming'
+    });
+
+    // Count total active participants (users with approved registrations)
+    const totalParticipants = await Registration.countDocuments({ status: 'approved' });
+
+    // Count total routes
+    const totalRoutes = await Route.countDocuments();
+
+    // Calculate engagement rate (approved registrations / total users * 100)
+    const totalUsers = await User.countDocuments({ role: { $ne: 'admin' } });
+    const engagementRate = totalUsers > 0 ? Math.round((totalParticipants / totalUsers) * 100) : 0;
+
+    res.json({
+      upcomingEvents,
+      totalParticipants,
+      totalRoutes,
+      engagementRate
+    });
+  } catch (error) {
+    console.error('Error fetching dashboard stats:', error);
+    res.status(500).json({ error: 'Failed to fetch dashboard stats' });
+  }
+});
+
 module.exports = router;
