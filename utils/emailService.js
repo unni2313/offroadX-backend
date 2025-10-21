@@ -2,13 +2,43 @@ const nodemailer = require('nodemailer');
 
 // Create transporter for sending emails
 const createTransporter = () => {
-  return nodemailer.createTransport({
-    service: 'gmail',
+  // First try with port 587 (STARTTLS)
+  const config587 = {
+    host: 'smtp.gmail.com',
+    port: 587,
+    secure: false,
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS,
     },
-  });
+    tls: {
+      rejectUnauthorized: false
+    },
+    connectionTimeout: 60000,
+    greetingTimeout: 30000,
+    socketTimeout: 75000,
+  };
+
+  // Alternative config with port 465 (SSL/TLS) as fallback
+  const config465 = {
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    },
+    tls: {
+      rejectUnauthorized: false
+    },
+    connectionTimeout: 60000,
+    greetingTimeout: 30000,
+    socketTimeout: 75000,
+  };
+
+  // Use port 465 if FORCE_SSL_EMAIL is set, otherwise use 587
+  const useSSL = process.env.FORCE_SSL_EMAIL === 'true';
+  return nodemailer.createTransport(useSSL ? config465 : config587);
 };
 
 // Send password reset email
@@ -66,10 +96,33 @@ const sendPasswordResetEmail = async (email, resetUrl, firstName) => {
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    console.log('Attempting to send email to:', email);
+    const useSSL = process.env.FORCE_SSL_EMAIL === 'true';
+    console.log('SMTP Configuration - Host: smtp.gmail.com, Port:', useSSL ? '465 (SSL)' : '587 (STARTTLS)');
+    console.log('EMAIL_USER configured:', process.env.EMAIL_USER ? 'Yes' : 'No');
+    console.log('EMAIL_PASS configured:', process.env.EMAIL_PASS ? 'Yes' : 'No');
+    
+    // Test connection before sending
+    await transporter.verify();
+    console.log('SMTP connection verified successfully');
+    
+    const result = await transporter.sendMail(mailOptions);
+    console.log('Email sent successfully:', result.messageId);
     return true;
   } catch (error) {
     console.error('Error sending password reset email:', error);
+    console.error('Error code:', error.code);
+    console.error('Error command:', error.command);
+    
+    // More detailed error information
+    if (error.code === 'ETIMEDOUT') {
+      console.error('Connection timeout - check network connectivity and SMTP settings');
+    } else if (error.code === 'EAUTH') {
+      console.error('Authentication failed - check EMAIL_USER and EMAIL_PASS');
+    } else if (error.code === 'ECONNECTION') {
+      console.error('Connection failed - check SMTP host and port');
+    }
+    
     return false;
   }
 };
