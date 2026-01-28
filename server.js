@@ -18,6 +18,7 @@ app.use(cors())
 app.use(express.json()) // For parsing JSON bodies
 
 
+
 // ✅ Connect to MongoDB
 mongoose
   .connect('mongodb+srv://felixsebastian:qwsaqwsa@cluster0.vmkml.mongodb.net/loginApp?retryWrites=true&w=majority&appName=Cluster0', {
@@ -47,6 +48,9 @@ app.use('/api/routes', routesRoute);
 // 🏁 Races routes
 const racesRoute = require('./routes/races');
 app.use('/api/races', racesRoute);
+
+const ecommerceRoute = require('./routes/ecommerce');
+app.use('/api/ecommerce', ecommerceRoute);
 
 // Test route
 app.get('/api', (req, res) => {
