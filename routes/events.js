@@ -6,6 +6,7 @@ const User = require('../models/User');
 const Registration = require('../models/Registration');
 const Race = require('../models/Race');
 const Result = require('../models/Result');
+const Notification = require('../models/Notification');
 const jwt = require('jsonwebtoken');
 
 // Middleware to verify JWT token
@@ -17,7 +18,7 @@ const authenticateToken = (req, res, next) => {
     return res.status(401).json({ error: 'Access token required' });
   }
 
-  jwt.verify(token, 'mudichidallamaa', (err, user) => {
+  jwt.verify(token, process.env.JWT_SECRET || 'mudichidallamaa', (err, user) => {
     if (err) {
       return res.status(403).json({ error: 'Invalid or expired token' });
     }
@@ -59,12 +60,12 @@ router.get('/upcoming', authenticateToken, async (req, res) => {
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    
+
     const upcomingEvents = await Event.find({
       date: { $gte: today },
       status: 'upcoming'
     }).sort({ date: 1 });
-    
+
     res.status(200).json(upcomingEvents);
   } catch (error) {
     console.error('Error fetching upcoming events:', error);
@@ -254,6 +255,14 @@ router.post('/create', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const event = new Event(req.body);
     await event.save();
+
+    // Create notification
+    const notification = new Notification({
+      type: 'event',
+      message: `New event added: ${event.name}`
+    });
+    await notification.save();
+
     res.status(201).json({ message: 'Event created successfully', event });
   } catch (error) {
     console.error('Error saving event:', error);
@@ -287,7 +296,7 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
 
     // Also delete all registrations for this event
     await Registration.deleteMany({ event: eventId });
-    
+
     // Also delete all result records for this event
     await Result.deleteMany({ event: eventId });
 
@@ -331,7 +340,7 @@ router.post('/:id/register', authenticateToken, async (req, res) => {
     // Check if user already has a registration for this event
     const existingRegistration = await Registration.findOne({ user: userId, event: eventId });
     if (existingRegistration) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: 'Already registered for this event',
         status: existingRegistration.status
       });
@@ -355,7 +364,7 @@ router.post('/:id/register', authenticateToken, async (req, res) => {
     // Populate user details for response
     await registration.populate('user', 'firstName secondName email');
 
-    res.status(201).json({ 
+    res.status(201).json({
       message: 'Registration submitted successfully. Awaiting admin approval.',
       registration
     });
@@ -371,8 +380,8 @@ router.post('/:id/cancel-registration', authenticateToken, async (req, res) => {
     const eventId = req.params.id;
     const userId = req.user.id;
 
-    const registration = await Registration.findOneAndDelete({ 
-      user: userId, 
+    const registration = await Registration.findOneAndDelete({
+      user: userId,
       event: eventId,
       status: { $in: ['pending', 'approved'] }
     });
@@ -389,7 +398,7 @@ router.post('/:id/cancel-registration', authenticateToken, async (req, res) => {
     // Clean up any Result records created for this registration
     await Result.deleteMany({ registration: registration._id });
 
-    res.status(200).json({ 
+    res.status(200).json({
       message: 'Registration cancelled successfully. Associated result records removed.'
     });
   } catch (error) {
@@ -402,7 +411,7 @@ router.post('/:id/cancel-registration', authenticateToken, async (req, res) => {
 router.get('/user/registrations', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
-    
+
     const registrations = await Registration.find({ user: userId })
       .populate('event')
       .populate('reviewedBy', 'firstName secondName')
@@ -422,10 +431,10 @@ router.get('/user/registrations', authenticateToken, async (req, res) => {
 router.get('/user/participations', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
-    
-    const approvedRegistrations = await Registration.find({ 
-      user: userId, 
-      status: 'approved' 
+
+    const approvedRegistrations = await Registration.find({
+      user: userId,
+      status: 'approved'
     }).populate('event');
 
     const participations = approvedRegistrations.map(reg => reg.event._id);
@@ -461,9 +470,9 @@ router.get('/:id/registrations', authenticateToken, requireAdmin, async (req, re
       .populate('vehiclesByRace')
       .sort({ appliedAt: -1 });
 
-    res.json({ 
-      count: registrations.length, 
-      registrations 
+    res.json({
+      count: registrations.length,
+      registrations
     });
   } catch (error) {
     console.error('Error fetching event registrations:', error);
@@ -475,17 +484,17 @@ router.get('/:id/registrations', authenticateToken, requireAdmin, async (req, re
 router.get('/:id/participants', authenticateToken, async (req, res) => {
   try {
     const eventId = req.params.id;
-    
-    const approvedRegistrations = await Registration.find({ 
-      event: eventId, 
-      status: 'approved' 
+
+    const approvedRegistrations = await Registration.find({
+      event: eventId,
+      status: 'approved'
     }).populate('user', 'firstName secondName email phone role');
 
     const participants = approvedRegistrations.map(reg => reg.user);
 
-    res.json({ 
-      count: participants.length, 
-      participants 
+    res.json({
+      count: participants.length,
+      participants
     });
   } catch (error) {
     console.error('Error fetching event participants:', error);
@@ -528,14 +537,14 @@ router.post('/registrations/:registrationId/approve', authenticateToken, require
     await Event.findByIdAndUpdate(event._id, { $inc: { participants: 1 } });
 
     // CREATE RESULT RECORDS FOR EACH RACE (fulfilling requirement: "When the participant is approved a record will be stored in results collection")
-    const resultPromises = registration.races.map(race => 
+    const resultPromises = registration.races.map(race =>
       Result.findOneAndUpdate(
-        { 
-          user: registration.user, 
-          race: race._id, 
-          event: event._id 
+        {
+          user: registration.user,
+          race: race._id,
+          event: event._id
         },
-        { 
+        {
           user: registration.user,
           race: race._id,
           event: event._id,
@@ -547,12 +556,12 @@ router.post('/registrations/:registrationId/approve', authenticateToken, require
         { upsert: true, new: true }
       )
     );
-    
+
     await Promise.all(resultPromises);
 
     await registration.populate('user', 'firstName secondName email');
 
-    res.status(200).json({ 
+    res.status(200).json({
       message: 'Registration approved successfully. Result records created for participant.',
       registration
     });
@@ -590,7 +599,7 @@ router.post('/registrations/:registrationId/reject', authenticateToken, requireA
 
     await registration.populate('user', 'firstName secondName email');
 
-    res.status(200).json({ 
+    res.status(200).json({
       message: 'Registration rejected',
       registration
     });
@@ -609,9 +618,9 @@ router.get('/admin/pending-registrations', authenticateToken, requireAdmin, asyn
       .populate('vehicles', 'make model year')
       .sort({ appliedAt: -1 });
 
-    res.json({ 
-      count: pendingRegistrations.length, 
-      registrations: pendingRegistrations 
+    res.json({
+      count: pendingRegistrations.length,
+      registrations: pendingRegistrations
     });
   } catch (error) {
     console.error('Error fetching pending registrations:', error);
@@ -623,7 +632,7 @@ router.get('/admin/pending-registrations', authenticateToken, requireAdmin, asyn
 router.get('/:eventId/races/:raceId/results', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { eventId, raceId } = req.params;
-    
+
     const results = await Result.find({ event: eventId, race: raceId })
       .populate('user', 'firstName secondName')
       .populate('vehicle', 'make model year')
@@ -651,7 +660,7 @@ router.post('/:eventId/races/:raceId/results', authenticateToken, requireAdmin, 
     // Verify the registration exists and belongs to this event/race
     const registration = await Registration.findById(registrationId)
       .populate('races');
-    
+
     if (!registration) {
       return res.status(404).json({ error: 'Registration not found' });
     }
@@ -685,7 +694,7 @@ router.post('/:eventId/races/:raceId/results', authenticateToken, requireAdmin, 
       resultData,
       { upsert: true, new: true }
     ).populate('user', 'firstName secondName')
-     .populate('vehicle', 'make model year');
+      .populate('vehicle', 'make model year');
 
     // Broadcast to SSE clients
     if (global.resultStreams) {
@@ -703,9 +712,9 @@ router.post('/:eventId/races/:raceId/results', authenticateToken, requireAdmin, 
       });
     }
 
-    res.json({ 
+    res.json({
       message: 'Result saved successfully',
-      result 
+      result
     });
   } catch (error) {
     console.error('Error saving result:', error);
@@ -720,9 +729,9 @@ router.get('/:eventId/guidelines', async (req, res) => {
     if (!event) {
       return res.status(404).json({ error: 'Event not found' });
     }
-    res.json({ 
+    res.json({
       message: 'Guidelines retrieved successfully',
-      guidelines: event.guidelines 
+      guidelines: event.guidelines
     });
   } catch (error) {
     console.error('Error fetching guidelines:', error);
@@ -734,7 +743,7 @@ router.get('/:eventId/guidelines', async (req, res) => {
 router.put('/:eventId/guidelines', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { text, checklistItems } = req.body;
-    
+
     if (!text && !checklistItems) {
       return res.status(400).json({ error: 'Please provide text or checklistItems' });
     }
@@ -753,9 +762,9 @@ router.put('/:eventId/guidelines', authenticateToken, requireAdmin, async (req, 
       return res.status(404).json({ error: 'Event not found' });
     }
 
-    res.json({ 
+    res.json({
       message: 'Guidelines updated successfully',
-      guidelines: event.guidelines 
+      guidelines: event.guidelines
     });
   } catch (error) {
     console.error('Error updating guidelines:', error);
@@ -814,9 +823,9 @@ router.post('/races/:raceId/verify-participant', authenticateToken, requireAdmin
     if (guidelineChecklist && guidelineChecklist.length > 0) {
       const requiredItems = event.guidelines.checklistItems.filter(item => item.required);
       const checkedRequired = guidelineChecklist.filter(item => item.checked && event.guidelines.checklistItems.find(g => g.item === item.item && g.required));
-      
+
       if (checkedRequired.length < requiredItems.length) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           error: 'All required guideline items must be checked',
           required: requiredItems.length,
           checked: checkedRequired.length
@@ -917,7 +926,7 @@ router.post('/races/:raceId/add-result', authenticateToken, requireAdmin, async 
 
     // Check if participant is verified (KEY VALIDATION)
     if (!result.verifiedByAdmin) {
-      return res.status(403).json({ 
+      return res.status(403).json({
         error: 'Participant must be verified before adding results',
         verificationRequired: true,
         verifiedByAdmin: result.verifiedByAdmin
@@ -967,7 +976,7 @@ router.put('/races/:raceId/results/:resultId', authenticateToken, requireAdmin, 
 
     // Check if participant is verified
     if (!result.verifiedByAdmin) {
-      return res.status(403).json({ 
+      return res.status(403).json({
         error: 'Participant must be verified before updating results',
         verificationRequired: true
       });

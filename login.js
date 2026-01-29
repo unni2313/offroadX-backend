@@ -4,7 +4,7 @@ const bcrypt = require('bcryptjs')
 const User = require('./models/User')
 const router = express.Router()
 
-const SECRET_KEY = 'mudichidallamaa'
+const SECRET_KEY = process.env.JWT_SECRET || 'mudichidallamaa'
 
 router.post('/', async (req, res) => {
   const { email, password } = req.body
@@ -23,7 +23,7 @@ router.post('/', async (req, res) => {
     // Check if user is currently blocked
     if (user.isBlocked && user.blockExpiry && new Date() < user.blockExpiry) {
       const remainingTime = Math.ceil((user.blockExpiry - new Date()) / (1000 * 60)) // minutes
-      return res.status(423).json({ 
+      return res.status(423).json({
         error: `Account is blocked due to multiple failed login attempts. Try again in ${remainingTime} minutes.`,
         blockedUntil: user.blockExpiry
       })
@@ -48,8 +48,8 @@ router.post('/', async (req, res) => {
         user.isBlocked = true
         user.blockExpiry = new Date(Date.now() + 4 * 60 * 60 * 1000) // 4 hours from now
         await user.save()
-        
-        return res.status(423).json({ 
+
+        return res.status(423).json({
           error: 'Account blocked due to 4 failed login attempts. Try again in 4 hours.',
           blockedUntil: user.blockExpiry
         })
@@ -57,7 +57,7 @@ router.post('/', async (req, res) => {
 
       await user.save()
       const remainingAttempts = 4 - user.failedLoginAttempts
-      return res.status(401).json({ 
+      return res.status(401).json({
         error: `Invalid email or password. ${remainingAttempts} attempts remaining before account is blocked.`
       })
     }
@@ -70,18 +70,18 @@ router.post('/', async (req, res) => {
       await user.save()
     }
 
-    const token = jwt.sign({ 
+    const token = jwt.sign({
       id: user._id,
-      email: user.email, 
+      email: user.email,
       firstName: user.firstName,
-      role: user.role 
+      role: user.role
     }, SECRET_KEY, {
       expiresIn: '1h',
     })
 
     res.json({
       message: 'Login successful',
-      user: { 
+      user: {
         firstName: user.firstName,
         secondName: user.secondName,
         email: user.email,

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Route = require('../models/Route');
+const Notification = require('../models/Notification');
 const auth = require('../utils/verify-token');
 
 // Get all routes (with optional filtering)
@@ -13,7 +14,7 @@ router.get('/', auth, async (req, res) => {
     if (difficulty) query.difficulty = difficulty;
     if (terrain) query.terrain = terrain;
     if (isActive !== undefined) query.isActive = isActive === 'true';
-    
+
     // Text search
     if (search) {
       query.$text = { $search: search };
@@ -73,18 +74,18 @@ router.post('/', auth, async (req, res) => {
     } = req.body;
 
     // Validate required fields
-    if (!name || !description || !difficulty || !distance || !estimatedTime || 
-        !terrain || !startLocation || !endLocation) {
-      return res.status(400).json({ 
-        message: 'Please provide all required fields' 
+    if (!name || !description || !difficulty || !distance || !estimatedTime ||
+      !terrain || !startLocation || !endLocation) {
+      return res.status(400).json({
+        message: 'Please provide all required fields'
       });
     }
 
     // Check if route name already exists
     const existingRoute = await Route.findOne({ name: name.trim() });
     if (existingRoute) {
-      return res.status(400).json({ 
-        message: 'A route with this name already exists' 
+      return res.status(400).json({
+        message: 'A route with this name already exists'
       });
     }
 
@@ -107,7 +108,14 @@ router.post('/', auth, async (req, res) => {
     });
 
     await route.save();
-    
+
+    // Create notification
+    const notification = new Notification({
+      type: 'trail',
+      message: `New trails open: ${route.name}`
+    });
+    await notification.save();
+
     // Populate the createdBy field before sending response
     await route.populate('createdBy', 'name email');
 
@@ -154,13 +162,13 @@ router.put('/:id', auth, async (req, res) => {
 
     // Check if new name conflicts with existing route (excluding current route)
     if (name && name.trim() !== route.name) {
-      const existingRoute = await Route.findOne({ 
+      const existingRoute = await Route.findOne({
         name: name.trim(),
         _id: { $ne: req.params.id }
       });
       if (existingRoute) {
-        return res.status(400).json({ 
-          message: 'A route with this name already exists' 
+        return res.status(400).json({
+          message: 'A route with this name already exists'
         });
       }
     }

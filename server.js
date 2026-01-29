@@ -49,6 +49,9 @@ app.use('/api/routes', routesRoute);
 const racesRoute = require('./routes/races');
 app.use('/api/races', racesRoute);
 
+const notificationsRoute = require('./routes/notifications');
+app.use('/api/notifications', notificationsRoute);
+
 const ecommerceRoute = require('./routes/ecommerce');
 app.use('/api/ecommerce', ecommerceRoute);
 

@@ -7,16 +7,16 @@ const mongoose = require('mongoose');
 const cloudinary = require('../utils/cloudinary');
 const router = express.Router();
 
-const SECRET_KEY = 'mudichidallamaa';
+const SECRET_KEY = process.env.JWT_SECRET || 'mudichidallamaa';
 
 // Middleware to verify admin role
 const verifyAdmin = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
-  
+
   if (!token) {
     return res.status(401).json({ error: 'Access token required' });
   }
-  
+
   try {
     const decoded = jwt.verify(token, SECRET_KEY);
     if (decoded.role !== 'admin') {
@@ -34,7 +34,7 @@ router.get('/user-status/:email', verifyAdmin, async (req, res) => {
   try {
     const { email } = req.params;
     const result = await getUserBlockStatus(email);
-    
+
     if (result.success) {
       res.json(result.data);
     } else {
@@ -50,13 +50,13 @@ router.get('/user-status/:email', verifyAdmin, async (req, res) => {
 router.post('/unblock-user', verifyAdmin, async (req, res) => {
   try {
     const { email } = req.body;
-    
+
     if (!email) {
       return res.status(400).json({ error: 'Email is required' });
     }
-    
+
     const result = await unblockUser(email);
-    
+
     if (result.success) {
       res.json({ message: result.message });
     } else {
@@ -72,13 +72,13 @@ router.post('/unblock-user', verifyAdmin, async (req, res) => {
 router.post('/reset-attempts', verifyAdmin, async (req, res) => {
   try {
     const { email } = req.body;
-    
+
     if (!email) {
       return res.status(400).json({ error: 'Email is required' });
     }
-    
+
     const result = await resetFailedAttempts(email);
-    
+
     if (result.success) {
       res.json({ message: result.message });
     } else {
@@ -104,14 +104,18 @@ router.get('/users', verifyAdmin, async (req, res) => {
       const users = await User.aggregate([
         { $match: match },
         { $lookup: { from: 'vehicles', localField: '_id', foreignField: 'user', as: 'vehicles' } },
-        { $addFields: {
-          vehicleCount: { $size: '$vehicles' },
-          hasLicenseDoc: { $gt: [{ $strLenCP: { $ifNull: ['$licenseDocUrl', ''] } }, 0] }
-        } },
-        { $project: {
-          password: 0, resetToken: 0, resetTokenExpiry: 0, otp: 0, otpExpiry: 0,
-          vehicles: 0
-        } },
+        {
+          $addFields: {
+            vehicleCount: { $size: '$vehicles' },
+            hasLicenseDoc: { $gt: [{ $strLenCP: { $ifNull: ['$licenseDocUrl', ''] } }, 0] }
+          }
+        },
+        {
+          $project: {
+            password: 0, resetToken: 0, resetTokenExpiry: 0, otp: 0, otpExpiry: 0,
+            vehicles: 0
+          }
+        },
         { $sort: { createdAt: -1 } }
       ]);
       return res.json(users);
@@ -134,7 +138,7 @@ router.put('/users/:id', verifyAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const allowed = [
-      'firstName','secondName','email','phone','role','isEmailVerified','dob','drivingLicenseNumber'
+      'firstName', 'secondName', 'email', 'phone', 'role', 'isEmailVerified', 'dob', 'drivingLicenseNumber'
     ];
     const update = {};
     for (const key of allowed) {
@@ -164,14 +168,18 @@ router.get('/users/:id', verifyAdmin, async (req, res) => {
       const users = await User.aggregate([
         { $match: { _id: new mongoose.Types.ObjectId(id) } },
         { $lookup: { from: 'vehicles', localField: '_id', foreignField: 'user', as: 'vehicles' } },
-        { $addFields: {
-          vehicleCount: { $size: '$vehicles' },
-          hasLicenseDoc: { $gt: [{ $strLenCP: { $ifNull: ['$licenseDocUrl', ''] } }, 0] }
-        } },
-        { $project: {
-          password: 0, resetToken: 0, resetTokenExpiry: 0, otp: 0, otpExpiry: 0,
-          vehicles: 0
-        } }
+        {
+          $addFields: {
+            vehicleCount: { $size: '$vehicles' },
+            hasLicenseDoc: { $gt: [{ $strLenCP: { $ifNull: ['$licenseDocUrl', ''] } }, 0] }
+          }
+        },
+        {
+          $project: {
+            password: 0, resetToken: 0, resetTokenExpiry: 0, otp: 0, otpExpiry: 0,
+            vehicles: 0
+          }
+        }
       ]);
       if (!users.length) return res.status(404).json({ error: 'User not found' });
       return res.json(users[0]);
@@ -222,7 +230,7 @@ router.get('/stats', verifyAdmin, async (req, res) => {
     const Event = require('../models/Event');
     const Route = require('../models/Route');
     const Registration = require('../models/Registration');
-    
+
     // Count upcoming events
     // Since dates are stored as strings in YYYY-MM-DD format, convert today to string
     const today = new Date();
